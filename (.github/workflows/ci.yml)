@@ -1,0 +1,49 @@
+name: Urielsmooth-P2Pv26 Production CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-verify:
+    name: Compile WASI 0.3 Core & Verify WebGPU Shaders
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (v20 LTS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust Toolchain & WASI Component Target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+
+      - name: Install Project Dependencies
+        run: npm ci
+
+      - name: Compile WASI Native Component
+        run: npm run build:wasm
+
+      - name: Build TypeScript Project Source
+        run: npm run build:ts
+
+      - name: Run Automated System Unit Tests
+        run: npm test
+
+  security-scan:
+    name: Dependency Vulnerability Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: NPM Audit Check
+        run: npm audit --audit-level=high
+
