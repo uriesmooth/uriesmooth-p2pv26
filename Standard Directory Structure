@@ -1,0 +1,14 @@
+uriesmooth-p2pv26/
+├── .github/
+│   └── workflows/
+│       └── ci.yml                 # Automated testing & build pipelines
+├── src/
+│   ├── index.ts                   # Primary public exports
+│   ├── UriesmoothPhoneEngine.ts   # Core WebRTC media engine & state machine
+│   ├── SignalingClient.ts        # Peer discovery & SDP handshake transport
+│   └── types/
+│       └── index.ts               # Shared TypeScript interface definitions
+├── package.json                   # Project manifest & dependency rules
+├── tsconfig.json                  # Strict TypeScript build parameters
+├── LICENSE                        # Apache 2.0 license file
+└── README.md                      # Technical documentation & usage instructions
