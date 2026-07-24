@@ -1,0 +1,54 @@
+export interface CallSession {
+    peerId: string;
+    status: 'connecting' | 'connected' | 'disconnected';
+    localStream?: MediaStream;
+    remoteStream?: MediaStream;
+}
+
+export class UriesmoothPhoneEngine {
+    private activeSession: CallSession | null = null;
+    private peerConnection: RTCPeerConnection | null = null;
+
+    /**
+     * Start a P2P call with target peer
+     */
+    public async startCall(targetPeerId: string): Promise<void> {
+        console.log(`[Uriesmooth Phone] Initiating peer call to: ${targetPeerId}`);
+        
+        // 1. Get local microphone / camera access
+        const localStream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: true
+        });
+
+        // 2. Setup WebRTC PeerConnection
+        this.peerConnection = new RTCPeerConnection({
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+
+        // 3. Attach local audio/video tracks
+        localStream.getTracks().forEach(track => {
+            this.peerConnection?.addTrack(track, localStream);
+        });
+
+        this.activeSession = {
+            peerId: targetPeerId,
+            status: 'connecting',
+            localStream
+        };
+
+        console.log(`[Uriesmooth Phone] Call connection initialized.`);
+    }
+
+    /**
+     * End current active phone call
+     */
+    public endCall(): void {
+        if (this.activeSession?.localStream) {
+            this.activeSession.localStream.getTracks().forEach(track => track.stop());
+        }
+        this.peerConnection?.close();
+        this.activeSession = null;
+        console.log('[Uriesmooth Phone] Call ended.');
+    }
+}
