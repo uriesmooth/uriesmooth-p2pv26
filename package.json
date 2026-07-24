@@ -1,0 +1,19 @@
+{
+  "name": "@uriesmooth/p2pv26",
+  "version": "26.1.0",
+  "description": "Core P2P Mesh & Communication Engine within the Uriesmooth Application Suite",
+  "organization": "uriesmooth",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "uriesmooth-cli": "dist/uriesmooth-cli.js"
+  },
+  "homepage": "https://uriesmooth.online",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/uriesmooth/uriesmooth-p2pv26.git"
+  },
+  "license": "Apache-2.0"
+}
