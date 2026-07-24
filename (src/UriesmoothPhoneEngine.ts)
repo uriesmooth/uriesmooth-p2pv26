@@ -1,0 +1,230 @@
+/**
+ * @file UriesmoothPhoneEngine.ts
+ * @package @uriesmooth/p2pv26
+ * @description Enterprise-Grade WebRTC Telephony Core Engine with Auto-Healing ICE Restarts
+ */
+
+export type CallState = 
+    | 'IDLE' 
+    | 'INITIALIZING_HARDWARE'
+    | 'RINGING_OUTBOUND' 
+    | 'RINGING_INBOUND'
+    | 'CONNECTING' 
+    | 'CONNECTED' 
+    | 'RECONNECTING' 
+    | 'FAILED' 
+    | 'DISCONNECTED';
+
+export interface PhoneEngineConfig {
+    iceServers: RTCIceServer[];
+    onStateChange?: (newState: CallState) => void;
+    onRemoteStream?: (stream: MediaStream) => void;
+    onIceCandidate?: (candidate: RTCIceCandidate) => void;
+}
+
+export class UriesmoothPhoneEngine {
+    private pc: RTCPeerConnection | null = null;
+    private localStream: MediaStream | null = null;
+    private remoteStream: MediaStream | null = null;
+    private state: CallState = 'IDLE';
+    private config: PhoneEngineConfig;
+
+    constructor(config: PhoneEngineConfig) {
+        this.config = config;
+    }
+
+    /**
+     * Obtains user media with high-definition audio DSP parameters
+     */
+    public async initializeAudio(): Promise<MediaStream> {
+        this.setState('INITIALIZING_HARDWARE');
+        try {
+            this.localStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: { ideal: true },
+                    noiseSuppression: { ideal: true },
+                    autoGainControl: { ideal: true },
+                    channelCount: { ideal: 1 }, // Optimized mono for low bandwidth telephony
+                    sampleRate: { ideal: 48000 } // Pristine 48kHz sampling for Opus engine
+                },
+                video: false
+            });
+
+            // Bind hardware track termination listeners
+            this.localStream.getAudioTracks().forEach(track => {
+                track.onended = () => this.handleHardwareDrop();
+            });
+
+            this.setState('IDLE');
+            return this.localStream;
+        } catch (error) {
+            console.error('[Uriesmooth] Hardware Initialization Error:', error);
+            this.setState('FAILED');
+            throw error;
+        }
+    }
+
+    /**
+     * Initiates an outbound call session (Creates SDP Offer with Opus FEC parameters)
+     */
+    public async createOffer(): Promise<RTCSessionDescriptionInit> {
+        if (!this.localStream) {
+            await this.initializeAudio();
+        }
+
+        this.setupPeerConnection();
+        this.setState('RINGING_OUTBOUND');
+
+        const offer = await this.pc!.createOffer();
+        // Modify SDP to enforce Opus codec preference & In-Band Forward Error Correction (FEC)
+        const optimizedSdp = this.optimizeSdpForOpusFec(offer.sdp!);
+        const modifiedOffer = new RTCSessionDescription({ type: 'offer', sdp: optimizedSdp });
+
+        await this.pc!.setLocalDescription(modifiedOffer);
+        return modifiedOffer;
+    }
+
+    /**
+     * Processes incoming call offer and returns SDP Answer
+     */
+    public async handleOffer(offerSdp: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit> {
+        if (!this.localStream) {
+            await this.initializeAudio();
+        }
+
+        this.setupPeerConnection();
+        this.setState('RINGING_INBOUND');
+
+        await this.pc!.setRemoteDescription(new RTCSessionDescription(offerSdp));
+        const answer = await this.pc!.createAnswer();
+        const optimizedSdp = this.optimizeSdpForOpusFec(answer.sdp!);
+        const modifiedAnswer = new RTCSessionDescription({ type: 'answer', sdp: optimizedSdp });
+
+        await this.pc!.setLocalDescription(modifiedAnswer);
+        this.setState('CONNECTING');
+        return modifiedAnswer;
+    }
+
+    /**
+     * Consumes incoming SDP Answer from remote peer
+     */
+    public async handleAnswer(answerSdp: RTCSessionDescriptionInit): Promise<void> {
+        if (!this.pc) return;
+        await this.pc.setRemoteDescription(new RTCSessionDescription(answerSdp));
+        this.setState('CONNECTING');
+    }
+
+    /**
+     * Adds remote ICE Candidate gathered via signaling channel
+     */
+    public async addIceCandidate(candidate: RTCIceCandidateInit): Promise<void> {
+        if (this.pc && this.pc.remoteDescription) {
+            await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
+        }
+    }
+
+    /**
+     * Terminate the call and clean up all allocated media devices and RTC sockets
+     */
+    public hangup(): void {
+        if (this.localStream) {
+            this.localStream.getTracks().forEach(track => track.stop());
+            this.localStream = null;
+        }
+        if (this.pc) {
+            this.pc.onicecandidate = null;
+            this.pc.onconnectionstatechange = null;
+            this.pc.close();
+            this.pc = null;
+        }
+        this.setState('DISCONNECTED');
+    }
+
+    /**
+     * Internal: Builds peer connection and configures event handlers
+     */
+    private setupPeerConnection(): void {
+        this.pc = new RTCPeerConnection({
+            iceServers: this.config.iceServers,
+            iceTransportPolicy: 'all',
+            bundlePolicy: 'max-bundle'
+        });
+
+        this.remoteStream = new MediaStream();
+
+        // Attach local tracks
+        this.localStream?.getTracks().forEach(track => {
+            this.pc?.addTrack(track, this.localStream!);
+        });
+
+        // Listen for inbound tracks
+        this.pc.ontrack = (event) => {
+            event.streams[0].getTracks().forEach(track => {
+                this.remoteStream?.addTrack(track);
+            });
+            if (this.config.onRemoteStream) {
+                this.config.onRemoteStream(this.remoteStream);
+            }
+        };
+
+        // ICE Candidate dispatch
+        this.pc.onicecandidate = (event) => {
+            if (event.candidate && this.config.onIceCandidate) {
+                this.config.onIceCandidate(event.candidate);
+            }
+        };
+
+        // Connection State Observer
+        this.pc.onconnectionstatechange = () => {
+            if (!this.pc) return;
+            switch (this.pc.connectionState) {
+                case 'connected':
+                    this.setState('CONNECTED');
+                    break;
+                case 'disconnected':
+                    this.setState('RECONNECTING');
+                    this.attemptIceRestart();
+                    break;
+                case 'failed':
+                    this.setState('FAILED');
+                    this.hangup();
+                    break;
+            }
+        };
+    }
+
+    /**
+     * Triggers an explicit ICE restart if connection drops mid-call
+     */
+    private async attemptIceRestart(): Promise<void> {
+        if (this.pc && this.pc.restartIce) {
+            console.warn('[Uriesmooth] Network drop detected. Re-negotiating ICE Candidates...');
+            this.pc.restartIce();
+            const offer = await this.pc.createOffer({ iceRestart: true });
+            await this.pc.setLocalDescription(offer);
+        }
+    }
+
+    /**
+     * Injects Opus Forward Error Correction (useinbandfec=1) directly into SDP payload
+     */
+    private optimizeSdpForOpusFec(sdp: string): string {
+        return sdp.replace(/a=fmtp:111 /g, 'a=fmtp:111 useinbandfec=1; stereo=0; sprop-stereo=0; ');
+    }
+
+    private handleHardwareDrop(): void {
+        console.warn('[Uriesmooth] Hardware microphone session terminated unexpectedly.');
+        this.hangup();
+    }
+
+    private setState(newState: CallState): void {
+        this.state = newState;
+        if (this.config.onStateChange) {
+            this.config.onStateChange(this.state);
+        }
+    }
+
+    public getState(): CallState {
+        return this.state;
+    }
+}
