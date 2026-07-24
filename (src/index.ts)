@@ -1,0 +1,11 @@
+/**
+ * @file index.ts
+ * @package @uriesmooth-p2pv26
+ * @description Standard entry point for the Uriesmooth P2P telephony module
+ */
+
+export { UriesmoothPhoneEngine } from './UriesmoothPhoneEngine.js';
+export type { 
+    CallState, 
+    PhoneEngineConfig 
+} from './UriesmoothPhoneEngine.js
